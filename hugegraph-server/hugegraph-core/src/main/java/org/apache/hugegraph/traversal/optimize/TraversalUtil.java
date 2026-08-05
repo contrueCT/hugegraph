@@ -175,6 +175,7 @@ public final class TraversalUtil {
                                            Traversal.Admin<?, ?> traversal) {
         Step<?, ?> step = newStep.getNextStep();
         if (hasUnsafeLabelInChain(step)) {
+            extractMixedNegativeLabelChain(newStep, traversal, step);
             return;
         }
         while (step instanceof HasStep || step instanceof NoOpBarrierStep) {
@@ -605,7 +606,9 @@ public final class TraversalUtil {
 
     public static void extractHasContainer(HugeVertexStep<?> newStep,
                                            Traversal.Admin<?, ?> traversal) {
-        if (hasUnsafeLabelInChain(newStep.getNextStep())) {
+        Step<?, ?> firstStep = newStep.getNextStep();
+        if (hasUnsafeLabelInChain(firstStep)) {
+            extractMixedNegativeLabelChain(newStep, traversal, firstStep);
             return;
         }
         Step<?, ?> step = newStep;
@@ -674,6 +677,92 @@ public final class TraversalUtil {
             step = step.getNextStep();
         }
         return false;
+    }
+
+    private static void extractMixedNegativeLabelChain(
+            HugeGraphStep<?, ?> newStep, Traversal.Admin<?, ?> traversal,
+            Step<?, ?> step) {
+        HugeGraph graph = tryGetGraph(newStep);
+        if (!canExtractMixedNegativeLabelChain(graph, step)) {
+            return;
+        }
+        while (step instanceof HasStep || step instanceof NoOpBarrierStep) {
+            Step<?, ?> nextStep = step.getNextStep();
+            if (step instanceof HasStep) {
+                removeConnectiveLabelStep(step);
+                HasContainerHolder holder = (HasContainerHolder) step;
+                for (HasContainer has : holder.getHasContainers()) {
+                    if (!GraphStep.processHasContainerIds(newStep, has)) {
+                        newStep.addHasContainer(has);
+                    }
+                }
+                TraversalHelper.copyLabels(step, step.getPreviousStep(), false);
+                traversal.removeStep(step);
+            }
+            step = nextStep;
+        }
+    }
+
+    private static void extractMixedNegativeLabelChain(
+            HugeVertexStep<?> newStep, Traversal.Admin<?, ?> traversal,
+            Step<?, ?> step) {
+        HugeGraph graph = tryGetGraph(newStep);
+        if (!canExtractMixedNegativeLabelChain(graph, step)) {
+            return;
+        }
+        while (step instanceof HasStep || step instanceof NoOpBarrierStep) {
+            Step<?, ?> nextStep = step.getNextStep();
+            if (step instanceof HasStep) {
+                removeConnectiveLabelStep(step);
+                HasContainerHolder holder = (HasContainerHolder) step;
+                for (HasContainer has : holder.getHasContainers()) {
+                    newStep.addHasContainer(has);
+                }
+                TraversalHelper.copyLabels(step, step.getPreviousStep(), false);
+                traversal.removeStep(step);
+            }
+            step = nextStep;
+        }
+    }
+
+    private static boolean canExtractMixedNegativeLabelChain(
+            HugeGraph graph, Step<?, ?> step) {
+        boolean hasNegativeLabel = false;
+        boolean hasUserprop = false;
+        while (step instanceof HasStep || step instanceof NoOpBarrierStep) {
+            if (step instanceof HasStep) {
+                HasContainerHolder holder = (HasContainerHolder) step;
+                for (HasContainer has : holder.getHasContainers()) {
+                    if (isNegativeLabelContainer(has)) {
+                        hasNegativeLabel = true;
+                        continue;
+                    }
+                    if (!isSysProp(has.getKey())) {
+                        hasUserprop = true;
+                    }
+                    if (!canExtractHasContainer(graph, has)) {
+                        return false;
+                    }
+                }
+            }
+            step = step.getNextStep();
+        }
+        return hasNegativeLabel && hasUserprop;
+    }
+
+    private static boolean isNegativeLabelContainer(HasContainer has) {
+        if (!has.getKey().equals(T.label.getAccessor())) {
+            return false;
+        }
+        List<P<Object>> predicates = new ArrayList<>();
+        collectPredicates(predicates, ImmutableList.of(has.getPredicate()));
+        for (P<Object> predicate : predicates) {
+            BiPredicate<?, ?> bp = predicate.getBiPredicate();
+            if (bp != Compare.neq && bp != Contains.without) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean hasUnsafeLabelPredicate(HasContainerHolder holder) {
@@ -974,7 +1063,10 @@ public final class TraversalUtil {
 
         HugeKeys key = token2HugeKey(has.getKey());
         E.checkNotNull(key, "token key");
-        Object value = convSysValueIfNeeded(graph, type, key, has.getValue());
+        boolean allowUndefinedLabel = key == HugeKeys.LABEL &&
+                                      bp == Compare.neq;
+        Object value = convSysValueIfNeeded(graph, type, key, has.getValue(),
+                                            allowUndefinedLabel);
 
         switch ((Compare) bp) {
             case eq:
@@ -1085,7 +1177,11 @@ public final class TraversalUtil {
         HugeKeys hugeKey = token2HugeKey(originKey);
         List<?> valueList;
         if (hugeKey != null) {
-            valueList = convSysListValueIfNeeded(graph, type, hugeKey, values);
+            boolean allowUndefinedLabel = hugeKey == HugeKeys.LABEL &&
+                                          bp == Contains.without;
+            valueList = convSysListValueIfNeeded(graph, type, hugeKey,
+                                                  values,
+                                                  allowUndefinedLabel);
             switch ((Contains) bp) {
                 case within:
                     return Condition.in(hugeKey, valueList);
@@ -1275,8 +1371,13 @@ public final class TraversalUtil {
     private static Object convSysValueIfNeeded(HugeGraph graph,
                                                HugeType type,
                                                HugeKeys key,
-                                               Object value) {
+                                               Object value,
+                                               boolean allowUndefinedLabel) {
         if (key == HugeKeys.LABEL && !(value instanceof Id)) {
+            if (allowUndefinedLabel && value instanceof String &&
+                !existsLabel(graph, type, (String) value)) {
+                return value;
+            }
             value = SchemaLabel.getLabelId(graph, type, value);
         } else if (key == HugeKeys.ID && !(value instanceof Id)) {
             value = HugeElement.getIdValue(type, value);
@@ -1284,13 +1385,25 @@ public final class TraversalUtil {
         return value;
     }
 
+    private static boolean existsLabel(HugeGraph graph, HugeType type,
+                                       String label) {
+        if (type.isVertex()) {
+            return graph.existsVertexLabel(label);
+        } else if (type.isEdge()) {
+            return graph.existsEdgeLabel(label);
+        }
+        return false;
+    }
+
     private static List<?> convSysListValueIfNeeded(HugeGraph graph,
                                                     HugeType type,
                                                     HugeKeys key,
-                                                    Collection<?> values) {
+                                                    Collection<?> values,
+                                                    boolean allowUndefinedLabel) {
         List<Object> newValues = new ArrayList<>(values.size());
         for (Object value : values) {
-            newValues.add(convSysValueIfNeeded(graph, type, key, value));
+            newValues.add(convSysValueIfNeeded(graph, type, key, value,
+                                               allowUndefinedLabel));
         }
         return newValues;
     }

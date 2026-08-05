@@ -220,7 +220,7 @@ public abstract class Condition {
         }),
 
         NEQ("!=", (v1, v2) -> {
-            return compare(v1, v2) != 0;
+            return !equals(v1, v2);
         }),
 
         IN("in", null, Collection.class, (v1, v2) -> {

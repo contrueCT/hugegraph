@@ -3640,13 +3640,32 @@ public class EdgeCoreTest extends BaseCoreTest {
 
         GraphTraversalSource g = graph.traversal();
 
-        List<Edge> edges = g.E().has(T.label, P.neq("reviewed"))
-                            .barrier().has("score", 2).toList();
-        Assert.assertEquals(1, edges.size());
-        Assert.assertEquals("recommended", edges.get(0).label());
+        Assert.assertThrows(NoIndexException.class, () -> {
+            g.E().has(T.label, P.neq("reviewed"))
+             .barrier().has("score", 2).toList();
+        });
 
-        edges = g.E().has("score", 2).barrier()
-                 .has(T.label, P.neq("reviewed")).toList();
+        Assert.assertThrows(NoIndexException.class, () -> {
+            g.E().has("score", 2).barrier()
+             .has(T.label, P.neq("reviewed")).toList();
+        });
+    }
+
+    @Test
+    public void testQueryEdgesByNonEqLabelAndFullyIndexedProperty() {
+        HugeGraph graph = graph();
+        initEdgeLabelQueryEdges();
+        SchemaManager schema = graph.schema();
+        schema.indexLabel("authoredByScoreForNegativeLabel").onE("authored")
+              .secondary().by("score").create();
+        schema.indexLabel("lookByScoreForNegativeLabel").onE("look")
+              .secondary().by("score").create();
+        schema.indexLabel("recommendedByScoreForNegativeLabel")
+              .onE("recommended").secondary().by("score").create();
+
+        List<Edge> edges = graph.traversal().E()
+                                .has(T.label, P.neq("reviewed"))
+                                .has("score", 2).toList();
         Assert.assertEquals(1, edges.size());
         Assert.assertEquals("recommended", edges.get(0).label());
     }

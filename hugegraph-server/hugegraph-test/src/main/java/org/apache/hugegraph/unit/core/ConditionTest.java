@@ -337,24 +337,21 @@ public class ConditionTest extends BaseUnitTest {
         Assert.assertFalse(c1.test("123.0"));
         Assert.assertTrue(c1.test("123.01"));
         Assert.assertTrue(c1.test("20"));
-        Assert.assertTrue(c1.test((Object) null)); // null means 0
+        Assert.assertTrue(c1.test((Object) null));
 
         Condition c2 = Condition.neq(HugeKeys.ID, 0);
         Assert.assertFalse(c2.test((Object) null));
 
-        Assert.assertThrows(IllegalArgumentException.class, () -> {
-            Condition.neq(HugeKeys.ID, "123").test(123);
-        }, e -> {
-            String err = "Can't compare between 123(Integer) and 123(String)";
-            Assert.assertEquals(err, e.getMessage());
-        });
-        Assert.assertThrows(IllegalArgumentException.class, () -> {
-            Condition.neq(HugeKeys.ID, "123").test(new Date(0L));
-        }, e -> {
-            String err = String.format("Can't compare between %s(Date) " +
-                                       "and 123(String)", new Date(0L));
-            Assert.assertEquals(err, e.getMessage());
-        });
+        Condition c3 = Condition.neq(HugeKeys.ID, "123");
+        Assert.assertFalse(c3.test("123"));
+        Assert.assertFalse(c3.test(IdGenerator.of(123L)));
+        Assert.assertTrue(c3.test(123));
+        Assert.assertTrue(c3.test(IdGenerator.of(124L)));
+        Assert.assertTrue(c3.test(new Date(0L)));
+
+        Condition c4 = Condition.neq(HugeKeys.ID, 123L);
+        Assert.assertFalse(c4.test(IdGenerator.of(123L)));
+        Assert.assertTrue(c4.test(IdGenerator.of(124L)));
     }
 
     @Test

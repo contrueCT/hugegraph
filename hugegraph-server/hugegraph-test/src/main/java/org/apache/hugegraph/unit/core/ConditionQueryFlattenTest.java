@@ -28,6 +28,7 @@ import org.apache.hugegraph.backend.query.ConditionQuery;
 import org.apache.hugegraph.backend.query.ConditionQueryFlatten;
 import org.apache.hugegraph.testutil.Assert;
 import org.apache.hugegraph.type.HugeType;
+import org.apache.hugegraph.type.define.HugeKeys;
 import org.apache.hugegraph.unit.BaseUnitTest;
 import org.junit.After;
 import org.junit.Test;
@@ -255,6 +256,25 @@ public class ConditionQueryFlattenTest extends BaseUnitTest {
                                                   Condition.neq(key, "3"));
         Collection<Condition> actual = queries.iterator().next().conditions();
         Assert.assertEquals(expect, actual);
+    }
+
+    @Test
+    public void testFlattenWithNotInIdValues() {
+        Id id1 = IdGenerator.of(1L);
+        Id id2 = IdGenerator.of(2L);
+        Id id3 = IdGenerator.of(3L);
+
+        ConditionQuery query = new ConditionQuery(HugeType.VERTEX);
+        query.query(Condition.nin(HugeKeys.LABEL,
+                                  ImmutableList.of(id1, id2)));
+        List<ConditionQuery> queries = ConditionQueryFlatten.flatten(query);
+        Assert.assertEquals(1, queries.size());
+
+        Collection<Condition> conditions = queries.get(0).conditions();
+        Assert.assertEquals(2, conditions.size());
+        Assert.assertFalse(conditions.stream().allMatch(c -> c.test(id1)));
+        Assert.assertFalse(conditions.stream().allMatch(c -> c.test(id2)));
+        Assert.assertTrue(conditions.stream().allMatch(c -> c.test(id3)));
     }
 
     @Test

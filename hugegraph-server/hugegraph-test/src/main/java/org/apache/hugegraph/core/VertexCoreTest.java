@@ -9097,13 +9097,13 @@ public class VertexCoreTest extends BaseCoreTest {
 
         GraphTraversalSource g = graph.traversal();
 
-        List<Object> names = g.V().has(T.label, P.neq("author"))
-                              .has("city", "Beijing")
-                              .values("name").toList();
-        Assert.assertEquals(4, names.size());
-        Assert.assertEquals(ImmutableSet.of("James", "Tom Cat", "Lisa",
-                                            "unindexed-city-fan"),
-                            ImmutableSet.copyOf(names));
+        Assert.assertThrows(NoIndexException.class, () -> {
+            g.V().has(T.label, P.neq("author"))
+             .has("city", "Beijing").toList();
+        }, e -> {
+            Assert.assertTrue(e.getMessage().contains("fan"));
+            Assert.assertTrue(e.getMessage().contains("follower"));
+        });
     }
 
     @Test
@@ -9117,13 +9117,10 @@ public class VertexCoreTest extends BaseCoreTest {
 
         GraphTraversalSource g = graph.traversal();
 
-        List<Object> names = g.V().has("city", "Beijing")
-                              .has(T.label, P.neq("author"))
-                              .values("name").toList();
-        Assert.assertEquals(4, names.size());
-        Assert.assertEquals(ImmutableSet.of("James", "Tom Cat", "Lisa",
-                                            "unindexed-city-fan"),
-                            ImmutableSet.copyOf(names));
+        Assert.assertThrows(NoIndexException.class, () -> {
+            g.V().has("city", "Beijing")
+             .has(T.label, P.neq("author")).toList();
+        });
     }
 
     @Test
@@ -9137,21 +9134,166 @@ public class VertexCoreTest extends BaseCoreTest {
 
         GraphTraversalSource g = graph.traversal();
 
-        List<Object> names = g.V().has(T.label, P.neq("author"))
-                              .barrier().has("city", "Beijing")
-                              .values("name").toList();
-        Assert.assertEquals(4, names.size());
-        Assert.assertEquals(ImmutableSet.of("James", "Tom Cat", "Lisa",
-                                            "unindexed-city-fan"),
-                            ImmutableSet.copyOf(names));
+        Assert.assertThrows(NoIndexException.class, () -> {
+            g.V().has(T.label, P.neq("author"))
+             .barrier().has("city", "Beijing").toList();
+        });
 
-        names = g.V().has("city", "Beijing").barrier()
-                 .has(T.label, P.neq("author"))
-                 .values("name").toList();
+        Assert.assertThrows(NoIndexException.class, () -> {
+            g.V().has("city", "Beijing").barrier()
+             .has(T.label, P.neq("author")).toList();
+        });
+    }
+
+    @Test
+    public void testQueryByNonEqLabelAndFullyIndexedProperty() {
+        HugeGraph graph = graph();
+        this.initNegativeLabelCityIndexes();
+        init5Persons();
+        graph.addVertex(T.label, "fan", "name", "indexed-city-fan",
+                        "age", 20, "city", "Beijing");
+        this.commitTx();
+
+        List<Object> names = graph.traversal().V()
+                                  .has(T.label, P.neq("author"))
+                                  .has("city", "Beijing")
+                                  .values("name").toList();
         Assert.assertEquals(4, names.size());
         Assert.assertEquals(ImmutableSet.of("James", "Tom Cat", "Lisa",
-                                            "unindexed-city-fan"),
+                                            "indexed-city-fan"),
                             ImmutableSet.copyOf(names));
+    }
+
+    @Test
+    public void testQueryByUnknownNonEqLabelAndIndexedProperty() {
+        HugeGraph graph = graph();
+        this.initNegativeLabelCityIndexes();
+        init5Persons();
+        graph.addVertex(T.label, "fan", "name", "indexed-city-fan",
+                        "age", 20, "city", "Beijing");
+        this.commitTx();
+
+        List<Object> names = graph.traversal().V()
+                                  .has(T.label, P.neq("not-exist"))
+                                  .has("city", "Beijing")
+                                  .values("name").toList();
+        Assert.assertEquals(4, names.size());
+        Assert.assertEquals(ImmutableSet.of("James", "Tom Cat", "Lisa",
+                                            "indexed-city-fan"),
+                            ImmutableSet.copyOf(names));
+    }
+
+    @Test
+    public void testQueryByWithoutLabelsAndIndexedProperty() {
+        HugeGraph graph = graph();
+        this.initNegativeLabelCityIndexes();
+        init5Persons();
+        graph.addVertex(T.label, "fan", "name", "indexed-city-fan",
+                        "age", 20, "city", "Beijing");
+        this.commitTx();
+
+        List<Object> names = graph.traversal().V()
+                                  .has(T.label,
+                                       P.without("author", "person"))
+                                  .has("city", "Beijing")
+                                  .values("name").toList();
+        Assert.assertEquals(ImmutableList.of("indexed-city-fan"), names);
+    }
+
+    @Test
+    public void testQueryByWithoutAllEligibleLabelsReturnsEmpty() {
+        HugeGraph graph = graph();
+        this.initNegativeLabelCityIndexes();
+        init5Persons();
+
+        List<Vertex> vertices = graph.traversal().V()
+                                     .has(T.label,
+                                          P.without("person", "fan",
+                                                    "follower"))
+                                     .has("city", "Beijing").toList();
+        Assert.assertTrue(vertices.isEmpty());
+    }
+
+    @Test
+    public void testQueryByMultipleNonEqLabelsAndIndexedProperty() {
+        HugeGraph graph = graph();
+        this.initNegativeLabelCityIndexes();
+        init5Persons();
+        graph.addVertex(T.label, "fan", "name", "indexed-city-fan",
+                        "age", 20, "city", "Beijing");
+        this.commitTx();
+
+        List<Object> names = graph.traversal().V()
+                                  .has(T.label, P.neq("author"))
+                                  .has(T.label, P.neq("person"))
+                                  .has("city", "Beijing")
+                                  .values("name").toList();
+        Assert.assertEquals(ImmutableList.of("indexed-city-fan"), names);
+    }
+
+    @Test
+    public void testQueryByNonEqLabelAndIndexedPropertyWithRange() {
+        HugeGraph graph = graph();
+        this.initNegativeLabelCityIndexes();
+        init5Persons();
+        graph.addVertex(T.label, "fan", "name", "indexed-city-fan",
+                        "age", 20, "city", "Beijing");
+        this.commitTx();
+
+        GraphTraversalSource g = graph.traversal();
+        List<Object> first = g.V().has(T.label, P.neq("author"))
+                              .has("city", "Beijing").values("name")
+                              .range(0L, 2L).toList();
+        List<Object> second = g.V().has(T.label, P.neq("author"))
+                               .has("city", "Beijing").values("name")
+                               .range(2L, 4L).toList();
+
+        Assert.assertEquals(2, first.size());
+        Assert.assertEquals(2, second.size());
+        Set<Object> names = new HashSet<>(first);
+        Assert.assertTrue(Collections.disjoint(names, second));
+        names.addAll(second);
+        Assert.assertEquals(ImmutableSet.of("James", "Tom Cat", "Lisa",
+                                            "indexed-city-fan"), names);
+    }
+
+    @Test
+    public void testQueryByNonEqLabelAndIndexedPropertyInPage() {
+        Assume.assumeTrue("Not support paging",
+                          storeFeatures().supportsQueryByPage());
+
+        HugeGraph graph = graph();
+        this.initNegativeLabelCityIndexes();
+        init5Persons();
+        graph.addVertex(T.label, "fan", "name", "indexed-city-fan",
+                        "age", 20, "city", "Beijing");
+        this.commitTx();
+
+        Set<Object> names = new HashSet<>();
+        String page = PageInfo.PAGE_NONE;
+        while (page != null) {
+            GraphTraversal<Vertex, Vertex> traversal = graph.traversal().V()
+                    .has(T.label, P.neq("author"))
+                    .has("city", "Beijing")
+                    .has("~page", page).limit(1L);
+            List<Vertex> vertices = traversal.toList();
+            Assert.assertTrue(vertices.size() <= 1);
+            for (Vertex vertex : vertices) {
+                Assert.assertTrue(names.add(vertex.value("name")));
+            }
+            page = TraversalUtil.page(traversal);
+        }
+        Assert.assertEquals(ImmutableSet.of("James", "Tom Cat", "Lisa",
+                                            "indexed-city-fan"), names);
+    }
+
+    private void initNegativeLabelCityIndexes() {
+        initPersonIndex(true);
+        SchemaManager schema = graph().schema();
+        schema.indexLabel("fanByCityForNegativeLabel").onV("fan")
+              .secondary().by("city").create();
+        schema.indexLabel("followerByCityForNegativeLabel").onV("follower")
+              .secondary().by("city").create();
     }
 
     @Test

@@ -392,8 +392,16 @@ public class GraphIndexTransaction extends AbstractTransaction {
 
         // Can't query by index and by non-label sysprop at the same time
         List<Condition> conds = query.syspropConditions();
-        if (conds.size() > 1 ||
-            (conds.size() == 1 && !query.containsCondition(HugeKeys.LABEL))) {
+        boolean hasNonLabelSysprop = false;
+        for (Condition condition : conds) {
+            Relation relation = (Relation) condition;
+            if (!relation.key().equals(HugeKeys.LABEL)) {
+                hasNonLabelSysprop = true;
+                break;
+            }
+        }
+        if (hasNonLabelSysprop ||
+            (conds.size() > 1 && !query.hasNegativeLabelCondition())) {
             throw new HugeException("Can't do index query with %s and %s",
                                     conds, query.userpropConditions());
         }
@@ -486,6 +494,10 @@ public class GraphIndexTransaction extends AbstractTransaction {
         }
         Set<MatchedIndex> indexes = this.collectMatchedIndexes(query);
         if (indexes.isEmpty()) {
+            if (query.hasNegativeLabelCondition() &&
+                this.negativeLabelCandidates(query).isEmpty()) {
+                return IdHolderList.empty(query.paging());
+            }
             Id label = query.uniqueConditionValue(HugeKeys.LABEL);
             throw noIndexException(this.graph(), query, label);
         }
@@ -760,15 +772,17 @@ public class GraphIndexTransaction extends AbstractTransaction {
     @Watched(prefix = "index")
     private Set<MatchedIndex> collectMatchedIndexes(ConditionQuery query) {
         ISchemaTransaction schema = this.params().schemaTransaction();
+        boolean requireCoverage = query.hasNegativeLabelCondition();
         boolean hasLabelValues = query.containsConditionValues(HugeKeys.LABEL);
         Set<Object> labels = query.conditionValues(HugeKeys.LABEL);
 
         List<? extends SchemaLabel> schemaLabels;
-        if (hasLabelValues && labels.isEmpty()) {
+        if (requireCoverage) {
+            schemaLabels = this.negativeLabelCandidates(query, schema);
+        } else if (hasLabelValues && labels.isEmpty()) {
             // LABEL EQ/IN conditions resolve to an empty intersection.
             return Collections.emptySet();
-        }
-        if (labels.size() == 1) {
+        } else if (labels.size() == 1) {
             Id label = (Id) labels.iterator().next();
             // Query has one resolved LABEL condition
             SchemaLabel schemaLabel;
@@ -798,13 +812,60 @@ public class GraphIndexTransaction extends AbstractTransaction {
 
         // Collect MatchedIndex for each SchemaLabel
         Set<MatchedIndex> matchedIndexes = InsertionOrderUtil.newSet();
+        List<SchemaLabel> uncoveredLabels = InsertionOrderUtil.newList();
         for (SchemaLabel schemaLabel : schemaLabels) {
             MatchedIndex index = this.collectMatchedIndex(schemaLabel, query);
             if (index != null) {
                 matchedIndexes.add(index);
+            } else if (requireCoverage) {
+                uncoveredLabels.add(schemaLabel);
             }
         }
+        if (!uncoveredLabels.isEmpty()) {
+            throw noIndexException(this.graph(), query, uncoveredLabels);
+        }
         return matchedIndexes;
+    }
+
+    private List<SchemaLabel> negativeLabelCandidates(ConditionQuery query) {
+        ISchemaTransaction schema = this.params().schemaTransaction();
+        return this.negativeLabelCandidates(query, schema);
+    }
+
+    private List<SchemaLabel> negativeLabelCandidates(
+            ConditionQuery query, ISchemaTransaction schema) {
+        List<? extends SchemaLabel> schemaLabels;
+        if (query.resultType().isVertex()) {
+            schemaLabels = schema.getVertexLabels();
+        } else if (query.resultType().isEdge()) {
+            schemaLabels = schema.getEdgeLabels();
+        } else {
+            throw new AssertionError(String.format(
+                    "Unsupported index query type: %s", query.resultType()));
+        }
+
+        Set<Id> queryProperties = query.userpropKeys();
+        List<SchemaLabel> candidates = InsertionOrderUtil.newList();
+        for (SchemaLabel schemaLabel : schemaLabels) {
+            if (!schemaLabel.properties().containsAll(queryProperties)) {
+                continue;
+            }
+            if (matchLabelConditions(query, schemaLabel)) {
+                candidates.add(schemaLabel);
+            }
+        }
+        return candidates;
+    }
+
+    private static boolean matchLabelConditions(ConditionQuery query,
+                                                SchemaLabel schemaLabel) {
+        for (Relation relation : query.relations()) {
+            if (relation.key().equals(HugeKeys.LABEL) &&
+                !relation.test(schemaLabel.id())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -956,7 +1017,7 @@ public class GraphIndexTransaction extends AbstractTransaction {
     private static Set<IndexLabel> matchSingleOrCompositeIndex(
             ConditionQuery query,
             Set<IndexLabel> indexLabels) {
-        if (query.hasNeqCondition()) {
+        if (query.hasUserpropNeqCondition()) {
             return ImmutableSet.of();
         }
         boolean requireRange = query.hasRangeCondition();
@@ -997,7 +1058,7 @@ public class GraphIndexTransaction extends AbstractTransaction {
     private static Set<IndexLabel> matchJointIndexes(
             ConditionQuery query,
             Set<IndexLabel> indexLabels) {
-        if (query.hasNeqCondition()) {
+        if (query.hasUserpropNeqCondition()) {
             return ImmutableSet.of();
         }
         Set<Id> queryPropKeys = query.userpropKeys();
@@ -1536,7 +1597,7 @@ public class GraphIndexTransaction extends AbstractTransaction {
         if (query.hasSearchCondition()) {
             mismatched.add("search");
         }
-        if (query.hasNeqCondition()) {
+        if (query.hasUserpropNeqCondition()) {
             mismatched.add("not-equal");
         }
         if (mismatched.isEmpty()) {
@@ -1547,6 +1608,19 @@ public class GraphIndexTransaction extends AbstractTransaction {
                                     "may not match %s condition",
                                     graph.mapPkId2Name(query.userpropKeys()),
                                     name, String.join("/", mismatched));
+    }
+
+    private static NoIndexException noIndexException(
+            HugeGraph graph, ConditionQuery query,
+            Collection<SchemaLabel> uncoveredLabels) {
+        List<String> labelNames = uncoveredLabels.stream()
+                                                 .map(SchemaLabel::name)
+                                                 .collect(Collectors.toList());
+        return new NoIndexException("Don't accept query based on properties " +
+                                    "%s that are not indexed in all matched " +
+                                    "labels, missing indexes in labels %s",
+                                    graph.mapPkId2Name(query.userpropKeys()),
+                                    labelNames);
     }
 
     private static void validateIndexLabel(IndexLabel indexLabel) {

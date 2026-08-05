@@ -17,6 +17,7 @@
 
 package org.apache.hugegraph.query;
 
+import org.apache.hugegraph.id.IdGenerator;
 import org.apache.hugegraph.type.define.HugeKeys;
 import org.junit.Assert;
 import org.junit.Test;
@@ -52,5 +53,16 @@ public class ConditionTest {
                                                        .test((Object) null));
         Assert.assertEquals("Can't compare between null(null) and true(Boolean)",
                             exception.getMessage());
+    }
+
+    @Test
+    public void testConditionNeqWithId() {
+        Condition stringId = Condition.neq(HugeKeys.ID, "123");
+        Assert.assertFalse(stringId.test(IdGenerator.of(123L)));
+        Assert.assertTrue(stringId.test(IdGenerator.of(124L)));
+
+        Condition numberId = Condition.neq(HugeKeys.ID, 123L);
+        Assert.assertFalse(numberId.test(IdGenerator.of(123L)));
+        Assert.assertTrue(numberId.test(IdGenerator.of(124L)));
     }
 }

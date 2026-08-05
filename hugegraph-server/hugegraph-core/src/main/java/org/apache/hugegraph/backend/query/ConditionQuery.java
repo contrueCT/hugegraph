@@ -683,6 +683,27 @@ public class ConditionQuery extends IdQuery {
         return false;
     }
 
+    public boolean hasNegativeLabelCondition() {
+        // NOTE: we need to judge all the conditions, including the nested
+        for (Condition.Relation r : this.relations()) {
+            if (r.relation() == RelationType.NEQ &&
+                r.key().equals(HugeKeys.LABEL)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean hasUserpropNeqCondition() {
+        // NOTE: we need to judge all the conditions, including the nested
+        for (Condition.Relation r : this.relations()) {
+            if (r.relation() == RelationType.NEQ && !r.isSysprop()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public boolean matchUserpropKeys(List<Id> keys) {
         Set<Id> conditionKeys = this.userpropKeys();
         return !keys.isEmpty() && conditionKeys.containsAll(keys);

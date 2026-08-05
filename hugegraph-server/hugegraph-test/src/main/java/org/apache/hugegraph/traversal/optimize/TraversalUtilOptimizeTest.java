@@ -264,7 +264,7 @@ public class TraversalUtilOptimizeTest {
     }
 
     @Test
-    public void testExtractHasContainerKeepsGraphChainWithUnsafeLabel() {
+    public void testExtractHasContainerPushesGraphChainWithNegativeLabel() {
         HugeGraph graph = Mockito.mock(HugeGraph.class);
         PropertyKey age = propertyKey(1L, "age", DataType.INT);
         Mockito.when(graph.propertyKey("age")).thenReturn(age);
@@ -276,8 +276,8 @@ public class TraversalUtilOptimizeTest {
 
         TraversalUtil.extractHasContainer(newStep, traversal);
 
-        Assert.assertTrue(newStep.getHasContainers().isEmpty());
-        Assert.assertEquals(2, countHasSteps(traversal));
+        Assert.assertEquals(2, newStep.getHasContainers().size());
+        Assert.assertEquals(0, countHasSteps(traversal));
 
         traversal = traversal(
                 __.V().has("age", 18).barrier()
@@ -286,8 +286,16 @@ public class TraversalUtilOptimizeTest {
 
         TraversalUtil.extractHasContainer(newStep, traversal);
 
+        Assert.assertEquals(2, newStep.getHasContainers().size());
+        Assert.assertEquals(0, countHasSteps(traversal));
+
+        traversal = traversal(__.V().has(T.label, P.neq("author")), graph);
+        newStep = replaceGraphStep(traversal);
+
+        TraversalUtil.extractHasContainer(newStep, traversal);
+
         Assert.assertTrue(newStep.getHasContainers().isEmpty());
-        Assert.assertEquals(2, countHasSteps(traversal));
+        Assert.assertEquals(1, countHasSteps(traversal));
     }
 
     @Test
@@ -324,7 +332,7 @@ public class TraversalUtilOptimizeTest {
     }
 
     @Test
-    public void testExtractHasContainerKeepsVertexChainWithUnsafeLabel() {
+    public void testExtractHasContainerPushesVertexChainWithNegativeLabel() {
         HugeGraph graph = Mockito.mock(HugeGraph.class);
         PropertyKey age = propertyKey(1L, "age", DataType.INT);
         Mockito.when(graph.propertyKey("age")).thenReturn(age);
@@ -336,8 +344,8 @@ public class TraversalUtilOptimizeTest {
 
         TraversalUtil.extractHasContainer(newStep, traversal);
 
-        Assert.assertTrue(newStep.getHasContainers().isEmpty());
-        Assert.assertEquals(2, countHasSteps(traversal));
+        Assert.assertEquals(2, newStep.getHasContainers().size());
+        Assert.assertEquals(0, countHasSteps(traversal));
 
         traversal = traversal(
                 __.V().out().has("age", 18).barrier()
@@ -346,8 +354,17 @@ public class TraversalUtilOptimizeTest {
 
         TraversalUtil.extractHasContainer(newStep, traversal);
 
+        Assert.assertEquals(2, newStep.getHasContainers().size());
+        Assert.assertEquals(0, countHasSteps(traversal));
+
+        traversal = traversal(
+                __.V().out().has(T.label, P.neq("author")), graph);
+        newStep = replaceVertexStep(traversal);
+
+        TraversalUtil.extractHasContainer(newStep, traversal);
+
         Assert.assertTrue(newStep.getHasContainers().isEmpty());
-        Assert.assertEquals(2, countHasSteps(traversal));
+        Assert.assertEquals(1, countHasSteps(traversal));
     }
 
     @Test

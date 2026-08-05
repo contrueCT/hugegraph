@@ -148,11 +148,31 @@ public class QueryTest {
         Assert.assertTrue(query.containsCondition(HugeKeys.LABEL));
         Assert.assertFalse(query.containsConditionValues(HugeKeys.LABEL));
         Assert.assertTrue(query.hasNeqCondition());
+        Assert.assertTrue(query.hasNegativeLabelCondition());
+        Assert.assertFalse(query.hasUserpropNeqCondition());
         Assert.assertEquals(ImmutableSet.of(),
                             query.conditionValues(HugeKeys.LABEL));
         Assert.assertNull(query.uniqueConditionValue(HugeKeys.LABEL));
         Assert.assertNull(query.conditionValue(HugeKeys.LABEL));
         Assert.assertNull(query.condition(HugeKeys.LABEL));
+    }
+
+    @Test
+    public void testDistinguishLabelAndUserpropNeqConditions() {
+        ConditionQuery query = new ConditionQuery(HugeType.VERTEX);
+        query.neq(HugeKeys.ID, IdGenerator.of(1L));
+
+        Assert.assertTrue(query.hasNeqCondition());
+        Assert.assertFalse(query.hasNegativeLabelCondition());
+        Assert.assertFalse(query.hasUserpropNeqCondition());
+
+        query.neq(HugeKeys.LABEL, IdGenerator.of(2L));
+        Assert.assertTrue(query.hasNegativeLabelCondition());
+        Assert.assertFalse(query.hasUserpropNeqCondition());
+
+        query.query(Condition.neq(IdGenerator.of(3L), "value"));
+        Assert.assertTrue(query.hasNegativeLabelCondition());
+        Assert.assertTrue(query.hasUserpropNeqCondition());
     }
 
     @Test
