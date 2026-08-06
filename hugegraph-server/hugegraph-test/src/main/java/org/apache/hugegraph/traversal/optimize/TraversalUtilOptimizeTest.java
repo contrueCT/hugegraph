@@ -268,6 +268,7 @@ public class TraversalUtilOptimizeTest {
         HugeGraph graph = Mockito.mock(HugeGraph.class);
         PropertyKey age = propertyKey(1L, "age", DataType.INT);
         Mockito.when(graph.propertyKey("age")).thenReturn(age);
+        Mockito.when(graph.existsVertexLabel("author")).thenReturn(true);
 
         Traversal.Admin<?, ?> traversal = traversal(
                 __.V().has(T.label, P.neq("author")).barrier()
@@ -336,6 +337,7 @@ public class TraversalUtilOptimizeTest {
         HugeGraph graph = Mockito.mock(HugeGraph.class);
         PropertyKey age = propertyKey(1L, "age", DataType.INT);
         Mockito.when(graph.propertyKey("age")).thenReturn(age);
+        Mockito.when(graph.existsVertexLabel("author")).thenReturn(true);
 
         Traversal.Admin<?, ?> traversal = traversal(
                 __.V().out().has(T.label, P.neq("author")).barrier()

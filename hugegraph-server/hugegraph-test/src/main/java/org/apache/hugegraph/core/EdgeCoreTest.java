@@ -3655,19 +3655,95 @@ public class EdgeCoreTest extends BaseCoreTest {
     public void testQueryEdgesByNonEqLabelAndFullyIndexedProperty() {
         HugeGraph graph = graph();
         initEdgeLabelQueryEdges();
-        SchemaManager schema = graph.schema();
-        schema.indexLabel("authoredByScoreForNegativeLabel").onE("authored")
-              .secondary().by("score").create();
-        schema.indexLabel("lookByScoreForNegativeLabel").onE("look")
-              .secondary().by("score").create();
-        schema.indexLabel("recommendedByScoreForNegativeLabel")
-              .onE("recommended").secondary().by("score").create();
+        this.initNegativeLabelScoreIndexes();
 
         List<Edge> edges = graph.traversal().E()
                                 .has(T.label, P.neq("reviewed"))
                                 .has("score", 2).toList();
         Assert.assertEquals(1, edges.size());
         Assert.assertEquals("recommended", edges.get(0).label());
+    }
+
+    @Test
+    public void testQueryEdgesByNumericUnknownNonEqLabelAndIndexedProperty() {
+        HugeGraph graph = graph();
+        initEdgeLabelQueryEdges();
+        this.initNegativeLabelScoreIndexes();
+
+        String unknownLabel = graph.schema().getEdgeLabel("recommended")
+                                   .id().asString();
+        Assert.assertFalse(graph.existsEdgeLabel(unknownLabel));
+
+        List<Edge> edges = graph.traversal().E()
+                                .has(T.label, P.neq(unknownLabel))
+                                .has("score", 2).toList();
+        Assert.assertEquals(1, edges.size());
+        Assert.assertEquals("recommended", edges.get(0).label());
+    }
+
+    @Test
+    public void testQueryEdgesByDisjunctiveNegativeLabelsDoesNotDuplicate() {
+        HugeGraph graph = graph();
+        Vertex reader = initEdgeLabelQueryEdges();
+        this.initNegativeLabelScoreIndexes();
+
+        Vertex book = graph.traversal().V()
+                           .hasLabel("book")
+                           .has("name", "edge-label-book-1").next();
+        reader.addEdge("look", book, "time", "2026-1-3", "score", 4);
+        graph.tx().commit();
+
+        List<String> labels = graph.traversal().E()
+                                   .has(T.label, P.neq("reviewed")
+                                                  .or(P.neq("recommended")))
+                                   .has("score", P.within(1, 2, 3, 4))
+                                   .label().toList();
+        assertDisjunctiveNegativeLabelEdges(labels);
+
+        long count = graph.traversal().E()
+                          .has(T.label, P.neq("reviewed")
+                                         .or(P.neq("recommended")))
+                          .has("score", P.within(1, 2, 3, 4))
+                          .count().next();
+        Assert.assertEquals(4L, count);
+
+        List<String> limited = graph.traversal().E()
+                                    .has(T.label, P.neq("reviewed")
+                                                   .or(P.neq("recommended")))
+                                    .has("score", P.within(1, 2, 3, 4))
+                                    .limit(5L).label().toList();
+        assertDisjunctiveNegativeLabelEdges(limited);
+    }
+
+    @Test
+    public void testQueryEdgesByEmptyWithoutLabelKeepsAllCandidates() {
+        HugeGraph graph = graph();
+        initEdgeLabelQueryEdges();
+        this.initNegativeLabelScoreIndexes();
+
+        List<String> labelFirst = graph.traversal().E()
+                                       .has(T.label, P.without())
+                                       .has("score", P.within(1, 2, 3))
+                                       .label().toList();
+        List<String> propertyFirst = graph.traversal().E()
+                                          .has("score", P.within(1, 2, 3))
+                                          .has(T.label, P.without())
+                                          .label().toList();
+        List<String> acrossBarrier = graph.traversal().E()
+                                           .has(T.label, P.without())
+                                           .barrier()
+                                           .has("score", P.within(1, 2, 3))
+                                           .label().toList();
+
+        for (List<String> labels : ImmutableList.of(labelFirst,
+                                                    propertyFirst,
+                                                    acrossBarrier)) {
+            Assert.assertEquals(3, labels.size());
+            Assert.assertEquals(2, Collections.frequency(labels,
+                                                          "reviewed"));
+            Assert.assertEquals(1, Collections.frequency(labels,
+                                                          "recommended"));
+        }
     }
 
     @Test
@@ -7870,6 +7946,24 @@ public class EdgeCoreTest extends BaseCoreTest {
 
         graph.tx().commit();
         return reader;
+    }
+
+    private void initNegativeLabelScoreIndexes() {
+        SchemaManager schema = graph().schema();
+        schema.indexLabel("authoredByScoreForNegativeLabel").onE("authored")
+              .secondary().by("score").create();
+        schema.indexLabel("lookByScoreForNegativeLabel").onE("look")
+              .secondary().by("score").create();
+        schema.indexLabel("recommendedByScoreForNegativeLabel")
+              .onE("recommended").secondary().by("score").create();
+    }
+
+    private static void assertDisjunctiveNegativeLabelEdges(
+            List<String> labels) {
+        Assert.assertEquals(4, labels.size());
+        Assert.assertEquals(2, Collections.frequency(labels, "reviewed"));
+        Assert.assertEquals(1, Collections.frequency(labels, "recommended"));
+        Assert.assertEquals(1, Collections.frequency(labels, "look"));
     }
 
     private void init100LookEdges() {

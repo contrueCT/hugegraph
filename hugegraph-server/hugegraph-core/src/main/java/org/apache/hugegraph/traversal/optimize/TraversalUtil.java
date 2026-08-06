@@ -471,6 +471,12 @@ public final class TraversalUtil {
     private static boolean hasUsableMatchIndex(HugeGraph graph,
                                                HugeGraphStep<?, ?> step,
                                                HasContainer has) {
+        return hasUsableMatchIndex(graph, step.returnsVertex(), has);
+    }
+
+    private static boolean hasUsableMatchIndex(HugeGraph graph,
+                                               boolean returnsVertex,
+                                               HasContainer has) {
         if (isSysProp(has.getKey())) {
             return false;
         }
@@ -488,7 +494,7 @@ public final class TraversalUtil {
             return false;
         }
 
-        Collection<? extends SchemaLabel> schemaLabels = step.returnsVertex() ?
+        Collection<? extends SchemaLabel> schemaLabels = returnsVertex ?
                                                          graph.vertexLabels() :
                                                          graph.edgeLabels();
         boolean seen = false;
@@ -683,7 +689,9 @@ public final class TraversalUtil {
             HugeGraphStep<?, ?> newStep, Traversal.Admin<?, ?> traversal,
             Step<?, ?> step) {
         HugeGraph graph = tryGetGraph(newStep);
-        if (!canExtractMixedNegativeLabelChain(graph, step)) {
+        if (!canExtractMixedNegativeLabelChain(graph,
+                                               newStep.returnsVertex(),
+                                               step)) {
             return;
         }
         while (step instanceof HasStep || step instanceof NoOpBarrierStep) {
@@ -707,7 +715,9 @@ public final class TraversalUtil {
             HugeVertexStep<?> newStep, Traversal.Admin<?, ?> traversal,
             Step<?, ?> step) {
         HugeGraph graph = tryGetGraph(newStep);
-        if (!canExtractMixedNegativeLabelChain(graph, step)) {
+        if (!canExtractMixedNegativeLabelChain(graph,
+                                               newStep.returnsVertex(),
+                                               step)) {
             return;
         }
         while (step instanceof HasStep || step instanceof NoOpBarrierStep) {
@@ -726,19 +736,24 @@ public final class TraversalUtil {
     }
 
     private static boolean canExtractMixedNegativeLabelChain(
-            HugeGraph graph, Step<?, ?> step) {
+            HugeGraph graph, boolean returnsVertex, Step<?, ?> step) {
         boolean hasNegativeLabel = false;
         boolean hasUserprop = false;
         while (step instanceof HasStep || step instanceof NoOpBarrierStep) {
             if (step instanceof HasStep) {
                 HasContainerHolder holder = (HasContainerHolder) step;
                 for (HasContainer has : holder.getHasContainers()) {
-                    if (isNegativeLabelContainer(has)) {
+                    if (isNegativeLabelContainer(graph, returnsVertex, has)) {
                         hasNegativeLabel = true;
                         continue;
                     }
                     if (!isSysProp(has.getKey())) {
                         hasUserprop = true;
+                    }
+                    if (hasMatchIndexSensitivePredicate(has) &&
+                        (graph == null ||
+                         !hasUsableMatchIndex(graph, returnsVertex, has))) {
+                        return false;
                     }
                     if (!canExtractHasContainer(graph, has)) {
                         return false;
@@ -750,19 +765,82 @@ public final class TraversalUtil {
         return hasNegativeLabel && hasUserprop;
     }
 
-    private static boolean isNegativeLabelContainer(HasContainer has) {
+    private static boolean isNegativeLabelContainer(HugeGraph graph,
+                                                    boolean returnsVertex,
+                                                    HasContainer has) {
         if (!has.getKey().equals(T.label.getAccessor())) {
             return false;
         }
-        List<P<Object>> predicates = new ArrayList<>();
-        collectPredicates(predicates, ImmutableList.of(has.getPredicate()));
-        for (P<Object> predicate : predicates) {
-            BiPredicate<?, ?> bp = predicate.getBiPredicate();
-            if (bp != Compare.neq && bp != Contains.without) {
+        return isNegativeLabelPredicate(graph, returnsVertex,
+                                        has.getPredicate());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static boolean isNegativeLabelPredicate(HugeGraph graph,
+                                                    boolean returnsVertex,
+                                                    P<?> predicate) {
+        if (predicate instanceof OrP) {
+            return false;
+        }
+        if (predicate instanceof AndP) {
+            List<P<Object>> predicates =
+                    ((AndP<Object>) predicate).getPredicates();
+            if (predicates.isEmpty()) {
+                return false;
+            }
+            for (P<?> child : predicates) {
+                if (!isNegativeLabelPredicate(graph, returnsVertex, child)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        BiPredicate<?, ?> bp = predicate.getBiPredicate();
+        if (bp == Compare.neq) {
+            return isKnownLabel(graph, returnsVertex, predicate.getValue());
+        }
+        if (bp != Contains.without ||
+            !(predicate.getValue() instanceof Collection)) {
+            return false;
+        }
+
+        Collection<?> labels = (Collection<?>) predicate.getValue();
+        if (labels.isEmpty()) {
+            return false;
+        }
+        for (Object label : labels) {
+            if (!isKnownLabel(graph, returnsVertex, label)) {
                 return false;
             }
         }
         return true;
+    }
+
+    private static boolean isKnownLabel(HugeGraph graph,
+                                        boolean returnsVertex,
+                                        Object label) {
+        if (graph == null) {
+            return false;
+        }
+        if (label instanceof String) {
+            return returnsVertex ?
+                   graph.existsVertexLabel((String) label) :
+                   graph.existsEdgeLabel((String) label);
+        }
+        if (!(label instanceof Id)) {
+            return false;
+        }
+        try {
+            if (returnsVertex) {
+                graph.vertexLabel((Id) label);
+            } else {
+                graph.edgeLabel((Id) label);
+            }
+            return true;
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     private static boolean hasUnsafeLabelPredicate(HasContainerHolder holder) {
